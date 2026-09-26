@@ -1,6 +1,11 @@
 import React, { StrictMode, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import DriftWall from './DriftWall';
+import { AuthProvider, useAuth } from './context/AuthContext.jsx';
+import AuthModal from './components/AuthModal.jsx';
+import UserMenu from './components/UserMenu.jsx';
+import CheckoutModal from './components/CheckoutModal.jsx';
+import { api } from './lib/api.js';
 import './styles.css';
 
 const rugs = [
@@ -15,11 +20,16 @@ const rugs = [
 ];
 
 function App() {
+  const { user } = useAuth();
   const [filter, setFilter] = useState('All rugs');
   const [query, setQuery] = useState('');
   const [favorites, setFavorites] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [showAuth, setShowAuth] = useState(false);
+  const [checkoutRug, setCheckoutRug] = useState(null);
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
   const filters = ['All rugs', 'Vintage', 'Heritage', 'Collector'];
+
   const visibleRugs = useMemo(() => rugs.filter((rug) => {
     const matchesFilter = filter === 'All rugs' || rug.type === filter;
     const matchesQuery = `${rug.title} ${rug.origin} ${rug.color}`.toLowerCase().includes(query.toLowerCase());
@@ -28,8 +38,43 @@ function App() {
 
   const wallItems = visibleRugs.map((rug) => ({ ...rug, href: '#' }));
 
-  function toggleFavorite(title) {
-    setFavorites((current) => current.includes(title) ? current.filter((item) => item !== title) : [...current, title]);
+  async function toggleFavorite(title) {
+    const rug = rugs.find((r) => r.title === title);
+    if (!rug) return;
+
+    if (!user) {
+      setShowAuth(true);
+      return;
+    }
+
+    setFavoriteLoading(true);
+    const isFavorited = favorites.includes(title);
+    try {
+      if (isFavorited) {
+        await api.removeFavorite(title);
+        setFavorites((current) => current.filter((item) => item !== title));
+      } else {
+        await api.addFavorite({ title: rug.title, image: rug.image, price: rug.price });
+        setFavorites((current) => [...current, title]);
+      }
+    } catch (err) {
+      console.error('Favorite error:', err);
+    } finally {
+      setFavoriteLoading(false);
+    }
+  }
+
+  function handleBuy(rug) {
+    if (!user) {
+      setShowAuth(true);
+      return;
+    }
+    setCheckoutRug(rug);
+  }
+
+  function handleCheckoutSuccess() {
+    setCheckoutRug(null);
+    setSelected(null);
   }
 
   return (
@@ -37,7 +82,11 @@ function App() {
       <nav className="nav shell">
         <a className="wordmark" href="#top"><span>W</span>OVEN<span className="dot">.</span></a>
         <div className="nav-links"><a className="active" href="#collection">Collection</a><a href="#story">The story</a><a href="#care">Care guide</a></div>
-        <div className="nav-actions"><button className="search-button" onClick={() => document.querySelector('.search-input')?.focus()} aria-label="Search rugs">Search <span>/</span></button><button className="bag-button" aria-label="Open saved rugs">Saved <b>{favorites.length}</b></button></div>
+        <div className="nav-actions">
+          <button className="search-button" onClick={() => document.querySelector('.search-input')?.focus()} aria-label="Search rugs">Search <span>/</span></button>
+          <button className="bag-button" aria-label="Open saved rugs">Saved <b>{favorites.length}</b></button>
+          <UserMenu onSignInClick={() => setShowAuth(true)} />
+        </div>
       </nav>
 
       <section className="intro shell" id="top">
@@ -53,9 +102,35 @@ function App() {
       {visibleRugs.length === 0 && <p className="empty shell">No rugs found in this corner of the archive.</p>}
 
       <footer className="footer shell" id="story"><div className="footer-mark">W<span>oven</span></div><p>Objects made by hand<br />deserve to be lived with.</p><span className="copyright">© 2026 Woven Archive</span></footer>
-      {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><div className="modal" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setSelected(null)} aria-label="Close rug details">×</button><img src={selected.image} alt={selected.title} /><div className="modal-content"><p className="eyebrow">{selected.type} / {selected.year}</p><h2>{selected.title}</h2><p>{selected.origin}. A one-of-a-kind hand-knotted piece with a quiet patina and a palette that deepens with time.</p><strong>{selected.price}</strong><button className="inquire">Inquire about this rug <span>↗</span></button></div></div></div>}
+
+      {selected && (
+        <div className="modal-backdrop" onClick={() => setSelected(null)}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" onClick={() => setSelected(null)} aria-label="Close rug details">×</button>
+            <img src={selected.image} alt={selected.title} />
+            <div className="modal-content">
+              <p className="eyebrow">{selected.type} / {selected.year}</p>
+              <h2>{selected.title}</h2>
+              <p>{selected.origin}. A one-of-a-kind hand-knotted piece with a quiet patina and a palette that deepens with time.</p>
+              <strong>{selected.price}</strong>
+              <button className="inquire" onClick={() => handleBuy(selected)}>Buy this rug <span>↗</span></button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+      {checkoutRug && <CheckoutModal rug={checkoutRug} onClose={() => setCheckoutRug(null)} onSuccess={handleCheckoutSuccess} />}
     </main>
   );
 }
 
-createRoot(document.getElementById('root')).render(<StrictMode><App /></StrictMode>);
+function Root() {
+  return (
+    <AuthProvider>
+      <App />
+    </AuthProvider>
+  );
+}
+
+createRoot(document.getElementById('root')).render(<StrictMode><Root /></StrictMode>);
